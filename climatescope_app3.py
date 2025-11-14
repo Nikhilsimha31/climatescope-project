@@ -1,4 +1,3 @@
-
 # climate_dashboard_final.py
 
 import streamlit as st
@@ -8,13 +7,10 @@ import plotly.express as px
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-
 # PAGE CONFIG
 st.set_page_config(page_title="🌍 Infosys Climate Dashboard", page_icon="🌎", layout="wide")
 
-
 # STYLING
-
 st.markdown("""
 <style>
 .stApp { background-color: #000; color: white; font-family: 'Helvetica Neue', sans-serif; }
@@ -40,13 +36,12 @@ if uploaded_file:
     df = pd.read_csv(uploaded_file)
     if "last_updated" in df.columns:
         df["last_updated"] = pd.to_datetime(df["last_updated"], errors="coerce")
+        df = df.dropna(subset=["last_updated"])
 else:
     st.warning("⚠️ Please upload your `df_clean.csv` file to continue.")
     st.stop()
 
-
 # SIDEBAR FILTERS
-
 st.sidebar.header("🔍 Filters")
 if "country" in df.columns:
     countries = st.sidebar.multiselect("🌎 Select Country", sorted(df["country"].dropna().unique()))
@@ -54,14 +49,23 @@ if "country" in df.columns:
         df = df[df["country"].isin(countries)]
 
 if "last_updated" in df.columns:
-    min_date, max_date = df["last_updated"].min().date(), df["last_updated"].max().date()
-    date_range = st.sidebar.date_input("🗓 Date Range", [min_date, max_date])
-    if len(date_range) == 2:
+    min_date = df["last_updated"].min().date()
+    max_date = df["last_updated"].max().date()
+
+    date_range = st.sidebar.date_input(
+        "🗓 Date Range",
+        value=[min_date, max_date],
+        min_value=min_date,
+        max_value=max_date
+    )
+
+    if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
         start, end = date_range
         df = df[(df["last_updated"].dt.date >= start) & (df["last_updated"].dt.date <= end)]
+    else:
+        df = df[df["last_updated"].dt.date == date_range]
 
 # NAVIGATION
-
 st.sidebar.title("🌐 Navigation")
 page = st.sidebar.radio(
     "Navigate",
@@ -78,9 +82,7 @@ page = st.sidebar.radio(
     ]
 )
 
-
 # 🏠 HOME
-
 if page == "🏠 Home":
     st.title("🌍 Infosys Climate Intelligence Dashboard")
     st.markdown("Welcome to your **interactive climate analytics hub** — visualize weather, air quality, and trends.")
@@ -100,9 +102,7 @@ if page == "🏠 Home":
         st.markdown(f'<div class="metric-card"><h3>🧾 Total Records</h3><p>{len(df):,}</p></div>', unsafe_allow_html=True)
     st.dataframe(df.head(10), use_container_width=True)
 
-
 # 🌡️ WEATHER OVERVIEW
-
 elif page == "🌡️ Weather Overview":
     st.title("🌡️ Weather Overview")
     fig = px.histogram(df, x="temperature_celsius", nbins=40, color_discrete_sequence=["red"])
@@ -115,7 +115,6 @@ elif page == "🌡️ Weather Overview":
         st.plotly_chart(fig2, use_container_width=True)
 
 # 🌬️ AIR QUALITY
-
 elif page == "🌬️ Air Quality":
     st.title("🌬️ Air Quality Overview")
     aq_cols = [c for c in df.columns if "air_quality" in c]
@@ -124,7 +123,6 @@ elif page == "🌬️ Air Quality":
         fig = px.bar(mean_aq, x="country", y=aq_cols, barmode="group", color_discrete_sequence=px.colors.sequential.Plasma)
         fig.update_layout(template="plotly_dark", paper_bgcolor="#000")
         st.plotly_chart(fig, use_container_width=True)
-
 
 # 📊 CORRELATION & MAP
 elif page == "📊 Correlation & Map":
@@ -143,59 +141,72 @@ elif page == "📊 Correlation & Map":
         fig_map.update_layout(template="plotly_dark", paper_bgcolor="#000")
         st.plotly_chart(fig_map, use_container_width=True)
 
-
 # 📈 GLOBAL TRENDS
-
 elif page == "📈 Global Trends":
     st.title("📈 Global Climate Trends")
+    
     if "last_updated" in df.columns:
+        # Select metric
         metric = st.selectbox("Select Metric", ["temperature_celsius", "humidity", "air_quality_PM2.5"])
+        
+        # Prepare trend data
         trend_df = df.groupby("last_updated")[metric].mean().reset_index()
-        trend_df["MA7"] = trend_df[metric].rolling(7).mean()
-        fig = px.line(trend_df, x="last_updated", y=["MA7", metric])
-        fig.update_layout(template="plotly_dark", paper_bgcolor="#000")
+        trend_df = trend_df.sort_values("last_updated")
+        trend_df["MA7"] = trend_df[metric].rolling(7, min_periods=1).mean()
+        
+        # Prepare long-form dataframe for PX
+        plot_df = trend_df.melt(id_vars="last_updated", value_vars=[metric, "MA7"],
+                                var_name="Type", value_name="Value")
+        
+        # Color mapping
+        if metric == "temperature_celsius":
+            colors = {metric: "#FF6F00", "MA7": "#00FFFF"}
+        elif metric == "humidity":
+            colors = {metric: "#00FF00", "MA7": "#FF00FF"}
+        elif metric == "air_quality_PM2.5":
+            colors = {metric: "#FF0000", "MA7": "#0000FF"}
+        else:
+            colors = {metric: "#FFFFFF", "MA7": "#00FFFF"}
+        
+        # Dash style mapping
+        dashes = {metric: "solid", "MA7": "dash"}
+        
+        # Plot
+        fig = px.line(
+            plot_df,
+            x="last_updated",
+            y="Value",
+            color="Type",
+            line_dash="Type",
+            color_discrete_map=colors,
+            line_dash_map=dashes,
+            labels={"last_updated": "Date", "Value": metric},
+            title=f"📈 Global Trend of {metric}",
+        )
+        
+        # Layout adjustments
+        fig.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="#000",
+            plot_bgcolor="#111",
+            font=dict(color="#FFFFFF"),
+            legend=dict(title="Metric", font=dict(color="#FFFFFF", size=12)),
+            xaxis=dict(showgrid=True, gridcolor="#333"),
+            yaxis=dict(showgrid=True, gridcolor="#333"),
+        )
+        
         st.plotly_chart(fig, use_container_width=True)
-
-
-# 🌎 COUNTRY COMPARISON (with Cool/Hot Rankings)
-
+# 🌎 COUNTRY COMPARISON
 elif page == "🌎 Country Comparison":
     st.title("🌎 Country Comparison Dashboard")
-
     metrics = ["temperature_celsius", "humidity", "air_quality_PM2.5"]
     selected_metric = st.selectbox("Select Metric", metrics)
-
     comp_df = df.groupby("country")[selected_metric].mean().reset_index().sort_values(selected_metric, ascending=False)
-
     fig = px.bar(comp_df, x="country", y=selected_metric, color=selected_metric, color_continuous_scale="Viridis")
     fig.update_layout(template="plotly_dark", paper_bgcolor="#000")
     st.plotly_chart(fig, use_container_width=True)
 
-    # ---- Cooler & Hotter Places Ranking ----
-    st.subheader("🌡️ Temperature Rankings by Country")
-    if "temperature_celsius" in df.columns:
-        temp_df = df.groupby("country")["temperature_celsius"].mean().reset_index().dropna()
-        hottest = temp_df.sort_values("temperature_celsius", ascending=False).head(5)
-        coolest = temp_df.sort_values("temperature_celsius", ascending=True).head(5)
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("🔥 **Top 5 Hottest Countries**")
-            fig_hot = px.bar(hottest, x="country", y="temperature_celsius", color="temperature_celsius",
-                             color_continuous_scale="reds")
-            fig_hot.update_layout(template="plotly_dark", paper_bgcolor="#000", showlegend=False)
-            st.plotly_chart(fig_hot, use_container_width=True)
-
-        with col2:
-            st.markdown("❄️ **Top 5 Coolest Countries**")
-            fig_cool = px.bar(coolest, x="country", y="temperature_celsius", color="temperature_celsius",
-                              color_continuous_scale="blues_r")
-            fig_cool.update_layout(template="plotly_dark", paper_bgcolor="#000", showlegend=False)
-            st.plotly_chart(fig_cool, use_container_width=True)
-
-
 # 🏆 RANKINGS
-
 elif page == "🏆 Rankings":
     st.title("🏆 Country Rankings")
     col = st.selectbox("Select Metric", ["temperature_celsius", "humidity", "air_quality_PM2.5"])
@@ -206,7 +217,6 @@ elif page == "🏆 Rankings":
     st.plotly_chart(fig, use_container_width=True)
 
 # 🌺 FLOWER GROWTH ADVISOR
-
 elif page == "🌺 Flower Growth Advisor":
     st.title("🌺 Flower Growth Advisor")
     flower = st.selectbox("Select Flower", ["Rose", "Tulip", "Lily", "Sunflower", "Orchid", "Marigold"])
@@ -225,11 +235,25 @@ elif page == "🌺 Flower Growth Advisor":
         if country not in df["country"].unique():
             st.error("❌ Invalid country. Please choose from the list.")
         else:
+            # Get actual average temperature for selected country
+            country_temp = df[df["country"] == country]["temperature_celsius"].mean()
             info = flower_data[flower]
-            st.success(f"✅ {flower} grows well in {country}")
-            st.write(f"🌡️ Ideal Temperature: {info['temp'][0]}°C - {info['temp'][1]}°C")
+            ideal_min, ideal_max = info["temp"]
+
+            st.write(f"🌡️ Current Avg Temperature in {country}: {country_temp:.1f}°C")
+            st.write(f"🌡️ Ideal Temperature for {flower}: {ideal_min}°C - {ideal_max}°C")
             st.write(f"☀️ Preferred Weather: {info['weather']}")
             st.write(f"📅 Best Month to Start: {pd.Timestamp(info['start_month'], 1, 1).month_name()}")
+
+            # Provide data-driven advice
+            if ideal_min <= country_temp <= ideal_max:
+                st.success(f"✅ {flower} can grow well in {country} based on current climate!")
+            elif country_temp < ideal_min:
+                st.warning(f"⚠️ {flower} may not grow well in {country}. Temperature is too low.")
+            else:
+                st.warning(f"⚠️ {flower} may not grow well in {country}. Temperature is too high.")
+
+
 # 🌪️ EXTREME EVENTS ANALYSIS
 elif page == "🌪️ Extreme Events Analysis":
     st.title("🌪️ Extreme Events Analysis")
@@ -239,28 +263,75 @@ elif page == "🌪️ Extreme Events Analysis":
         df["month"] = df["last_updated"].dt.month
 
         country_sel = st.selectbox("Select Country", ["All"] + sorted(df["country"].dropna().unique()))
+
+        # Extreme Events based on multiple parameters
+        df["extreme_event"] = False
+        if "temperature_celsius" in df.columns:
+            df["extreme_event"] |= (df["temperature_celsius"] > 40) | (df["temperature_celsius"] < 0)
+        if "air_quality_PM2.5" in df.columns:
+            df["extreme_event"] |= (df["air_quality_PM2.5"] > 100)
+        if "humidity" in df.columns:
+            df["extreme_event"] |= (df["humidity"] < 20)
+        if "wind_speed_kmh" in df.columns:
+            df["extreme_event"] |= (df["wind_speed_kmh"] > 80)
+        if "precipitation_mm" in df.columns:
+            df["extreme_event"] |= (df["precipitation_mm"] > 50)
+
+        # Filter by country
         df_sel = df if country_sel == "All" else df[df["country"] == country_sel]
 
-        agg_type = st.radio("Aggregate By", ["Month", "Year"], horizontal=True)
-        if agg_type == "Month":
-            agg_df = df_sel.groupby("month").size().reset_index(name="Event Count")
-            x_col = "month"
+        if df_sel["extreme_event"].sum() == 0:
+            st.info("No extreme events found for selected filters.")
         else:
-            agg_df = df_sel.groupby("year").size().reset_index(name="Event Count")
-            x_col = "year"
+            agg_type = st.radio("Aggregate By", ["Month", "Year"], horizontal=True)
 
-        fig = px.bar(agg_df, x=x_col, y="Event Count", color="Event Count", color_continuous_scale="Viridis")
-        fig.update_layout(template="plotly_dark", paper_bgcolor="#000")
-        st.plotly_chart(fig, use_container_width=True)
+            if country_sel == "All":
+                # Group by country + month/year
+                if agg_type == "Month":
+                    agg_df = df_sel[df_sel["extreme_event"]].groupby(["country", "month"]).size().reset_index(name="Event Count")
+                    x_col = "month"
+                else:
+                    agg_df = df_sel[df_sel["extreme_event"]].groupby(["country", "year"]).size().reset_index(name="Event Count")
+                    x_col = "year"
+            else:
+                # Group by month/year for selected country
+                if agg_type == "Month":
+                    agg_df = df_sel[df_sel["extreme_event"]].groupby("month").size().reset_index(name="Event Count")
+                    x_col = "month"
+                else:
+                    agg_df = df_sel[df_sel["extreme_event"]].groupby("year").size().reset_index(name="Event Count")
+                    x_col = "year"
 
-        if {"latitude", "longitude"}.issubset(df_sel.columns):
-            df_latlon = df_sel.dropna(subset=["latitude", "longitude"])
-            if not df_latlon.empty:
-                st.subheader("🗺️ Extreme Events Map")
-                fig_map = px.scatter_geo(df_latlon, lat="latitude", lon="longitude",
-                                         color="temperature_celsius",
-                                         hover_name="country",
-                                         color_continuous_scale=["blue", "red"],
-                                         projection="natural earth")
-                fig_map.update_layout(template="plotly_dark", paper_bgcolor="#000")
-                st.plotly_chart(fig_map, use_container_width=True)
+            st.subheader("📊 Extreme Events Summary")
+            st.dataframe(agg_df, use_container_width=True)
+
+            # Bar chart
+            fig = px.bar(
+                agg_df,
+                x=x_col,
+                y="Event Count",
+                color="country" if country_sel=="All" else "Event Count",
+                barmode="group" if country_sel=="All" else "relative",
+                color_continuous_scale="Viridis"
+            )
+            fig.update_layout(template="plotly_dark", paper_bgcolor="#000")
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Map of extreme events
+            if {"latitude", "longitude"}.issubset(df_sel.columns):
+                df_latlon = df_sel[df_sel["extreme_event"]].dropna(subset=["latitude", "longitude"])
+                if not df_latlon.empty:
+                    st.subheader("🗺️ Extreme Events Map")
+                    # Show 'location' if exists, else fallback to 'country'
+                    hover_column = "location" if "location" in df_latlon.columns else "country"
+                    fig_map = px.scatter_geo(
+                        df_latlon,
+                        lat="latitude",
+                        lon="longitude",
+                        color="country",
+                        hover_name=hover_column,  # displays location name on hover
+                        size_max=15,
+                        projection="natural earth"
+                    )
+                    fig_map.update_layout(template="plotly_dark", paper_bgcolor="#000")
+                    st.plotly_chart(fig_map, use_container_width=True)
